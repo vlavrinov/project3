@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Прогноз погоды для маршрута</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Прогноз погоды для маршрута</h1>
+    <form method="POST">
+        <label for="start_city">Начальный город:</label><br>
+        <input type="text" id="start_city" name="start_city" required><br>
+        <label for="end_city">Конечный город:</label><br>
+        <input type="text" id="end_city" name="end_city" required><br><br>
+        <input type="submit" value="Узнать погоду">
+    </form>
+
+    {% if weather_status %}
+    <p>{{ weather_status }}</p>
+    {% endif %}
+</body>
+</html>
