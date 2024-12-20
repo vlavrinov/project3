@@ -9,24 +9,6 @@
     <div id="dash-container"></div>
 
     <script>
-        // Функция для добавления нового поля ввода города
-        function addCityInput() {
-            const container = document.getElementById('city-inputs-container');
-            const newIndex = container.children.length;
-
-            const newLabel = document.createElement('label');
-            newLabel.textContent = `Промежуточный город ${newIndex}:`;
-            container.appendChild(newLabel);
-
-            const newInput = document.createElement('input');
-            newInput.type = 'text';
-            newInput.id = `intermediate_city_${newIndex}`;
-            newInput.name = `intermediate_city_${newIndex}`;
-            container.appendChild(newInput);
-
-            container.appendChild(document.createElement('br'));
-        }
-
         // Встраиваем Dash приложение в div
         window.addEventListener('DOMContentLoaded', (event) => {
             const dashContainer = document.getElementById('dash-container');
