@@ -2,17 +2,18 @@ from flask import Flask, render_template, request
 import requests
 import json
 import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash import dcc, html, dash_table
+from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
 import pandas as pd
 
-API_KEY = "XzKIblRO445awcuauGkULV8S3lzcAQLS"
+API_KEY = "eV1zitDYn4qOhHgmco2zDjzaCdfnD7N9"
 LOCATION_URL = "http://dataservice.accuweather.com/locations/v1/cities/autocomplete"
 FIVE_DAY_FORECAST_URL = "http://dataservice.accuweather.com/forecasts/v1/daily/5day/{}"
+ONE_DAY_FORECAST_URL = "http://dataservice.accuweather.com/forecasts/v1/daily/1day/{}"
 
 server = Flask(__name__)
-app = dash.Dash(__name__, server=server, url_base_pathname='/')
+app = dash.Dash(__name__, server=server, suppress_callback_exceptions=True)
 
 # Функция для получения координат города
 def get_location_key(city_name):
@@ -25,7 +26,8 @@ def get_location_key(city_name):
         response.raise_for_status()
         data = response.json()
         if data:
-            return data[0]["Key"]
+            location_key = data[0]["Key"]
+            return location_key
         else:
             return None
     except requests.exceptions.RequestException as e:
@@ -35,10 +37,36 @@ def get_location_key(city_name):
         print(f"Ошибка при обработке данных Location API: {e}")
         return None
 
-# Функция для получения данных о погоде
-def get_weather_data(location_key):
+def get_coordinates(location_key):
+    url = f"http://dataservice.accuweather.com/locations/v1/{location_key}"
+    params = {
+        "apikey": API_KEY
+    }
     try:
-        response = requests.get(FIVE_DAY_FORECAST_URL.format(location_key), params={"apikey": API_KEY, "metric": True})
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data and "GeoPosition" in data:
+            latitude = data["GeoPosition"]["Latitude"]
+            longitude = data["GeoPosition"]["Longitude"]
+            return latitude, longitude
+        else:
+            return None, None
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка при запросе к AccuWeather Location API (получение координат): {e}")
+        return None, None
+    except (IndexError, KeyError) as e:
+        print(f"Ошибка при обработке данных Location API (получение координат): {e}")
+        return None, None
+
+# Функция для получения данных о погоде
+def get_weather_data(location_key, days=1):
+    if days == 1:
+        url = ONE_DAY_FORECAST_URL.format(location_key)
+    else:
+        url = FIVE_DAY_FORECAST_URL.format(location_key)
+    try:
+        response = requests.get(url, params={"apikey": API_KEY, "metric": True})
         response.raise_for_status()
         data = response.json()
         return data
@@ -90,69 +118,249 @@ app.layout = html.Div([
         html.Label("Конечный город:"),
         dcc.Input(id='end_city', type='text', required=True),
         html.Br(),
+        html.Div(id='intermediate-cities'),
+        html.Button('Добавить промежуточный город', id='add-city-btn', n_clicks=0),
+        html.Br(),
+        html.Label("Прогноз на:"),
+        dcc.RadioItems(
+            id='forecast_days',
+            options=[
+                {'label': '1 день', 'value': 1},
+                {'label': '5 дней', 'value': 5}
+            ],
+            value=1
+        ),
+        html.Br(),
         html.Button('Узнать погоду', id='submit-val', n_clicks=0),
     ]),
-    html.Div(id='weather-output')
+    html.Div([
+        html.Label("Выберите тип данных:"),
+        dcc.Dropdown(
+            id='data-type-dropdown',
+            options=[
+                {'label': 'Температура', 'value': 'temperature'},
+                {'label': 'Ветер', 'value': 'wind'},
+                {'label': 'Осадки', 'value': 'precipitation'}
+            ],
+            value='temperature'
+        ),
+        html.Br(),
+        html.Label("Выберите город:"),
+        dcc.RadioItems(
+            id='city-select',
+            options=[],
+            value=''
+        ),
+        html.Br(),
+        dcc.Slider(
+            id='day-slider',
+            min=0,
+            max=4,
+            value=0,
+            marks={i: f'День {i+1}' for i in range(5)},
+            step=None
+        ),
+    ], style={'marginBottom': 50, 'marginTop': 25}),
+    html.Div(id='weather-output'),
 ])
+
+# Коллбэк для добавления полей промежуточных городов
+@app.callback(
+    Output('intermediate-cities', 'children'),
+    Input('add-city-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+def add_intermediate_city(n_clicks):
+    new_city_input = html.Div([
+        dcc.Input(
+            id={'type': 'intermediate_city', 'index': n_clicks},
+            type='text',
+            placeholder=f'Промежуточный город {n_clicks}',
+        ),
+        html.Br(),
+    ])
+    return new_city_input
+
+# Коллбэк для обновления доступных городов
+@app.callback(
+    Output('city-select', 'options'),
+    Output('city-select', 'value'),
+    Input('submit-val', 'n_clicks'),
+    State('start_city', 'value'),
+    State('end_city', 'value'),
+    State({'type': 'intermediate_city', 'index': dash.dependencies.ALL}, 'value')
+)
+def update_city_options(n_clicks, start_city, end_city, intermediate_cities):
+    if n_clicks > 0:
+        cities = [start_city, end_city] + (intermediate_cities or [])
+        cities = [city for city in cities if city]  # Фильтруем пустые значения
+        options = [{'label': city, 'value': city} for city in cities]
+        return options, start_city if start_city else ''
+    return [], ''
 
 # Коллбэк для обработки запроса и вывода результатов
 @app.callback(
     Output('weather-output', 'children'),
     Input('submit-val', 'n_clicks'),
-    dash.dependencies.State('start_city', 'value'),
-    dash.dependencies.State('end_city', 'value')
+    Input('data-type-dropdown', 'value'),
+    Input('city-select', 'value'),
+    Input('forecast_days', 'value'),
+    State('start_city', 'value'),
+    State('end_city', 'value'),
+    State({'type': 'intermediate_city', 'index': dash.dependencies.ALL}, 'value')
 )
-def update_output(n_clicks, start_city, end_city):
+def update_output(n_clicks, data_type, selected_city, forecast_days, start_city, end_city, intermediate_cities):
     if n_clicks > 0:
-        if not start_city or not end_city:
-            return "Пожалуйста, введите названия обоих городов."
+        cities = [start_city, end_city] + (intermediate_cities or [])
+        cities = [city for city in cities if city]
 
-        start_location_key = get_location_key(start_city)
-        end_location_key = get_location_key(end_city)
+        if not cities:
+            return "Пожалуйста, введите названия городов."
 
-        if not start_location_key or not end_location_key:
-            return "Не удалось определить местоположение одного или обоих городов."
+        all_weather_data = {}
+        all_weather_status = {}
+        city_coordinates = {}
 
-        start_weather_data = get_weather_data(start_location_key)
-        end_weather_data = get_weather_data(end_location_key)
+        for city in cities:
+            location_key = get_location_key(city)
+            if not location_key:
+                return f"Не удалось определить местоположение города {city}."
 
-        start_weather_status = check_bad_weather(start_weather_data)
-        end_weather_status = check_bad_weather(end_weather_data)
+            latitude, longitude = get_coordinates(location_key)
+            if latitude is None or longitude is None:
+                return f"Не удалось получить координаты для города {city}."
+
+            weather_data = get_weather_data(location_key, days=forecast_days)
+            all_weather_data[city] = weather_data
+            all_weather_status[city] = check_bad_weather(weather_data)
+            city_coordinates[city] = (latitude, longitude)
         
+        # Если город не выбран, показываем таблицу со всеми городами
+        if not selected_city:
+            table_data = []
+            for city, weather_data in all_weather_data.items():
+                if weather_data and 'DailyForecasts' in weather_data:
+                    for i, forecast in enumerate(weather_data['DailyForecasts']):
+                        if i < forecast_days:
+                            table_data.append({
+                                'Город': city,
+                                'День': i + 1,
+                                'Макс. температура': forecast['Temperature']['Maximum']['Value'],
+                                'Мин. температура': forecast['Temperature']['Minimum']['Value'],
+                                'Скорость ветра днем': forecast['Day']['Wind']['Speed']['Value'] if forecast.get('Day', {}).get('Wind', {}).get('Speed', {}).get('Value') is not None else 'Нет данных',
+                                'Скорость ветра ночью': forecast['Night']['Wind']['Speed']['Value'] if forecast.get('Night', {}).get('Wind', {}).get('Speed', {}).get('Value') is not None else 'Нет данных',
+                                'Осадки днем': 'Да' if forecast['Day']['HasPrecipitation'] else 'Нет',
+                                'Осадки ночью': 'Да' if forecast['Night']['HasPrecipitation'] else 'Нет'
+                            })
+            if table_data:
+                return dash_table.DataTable(
+                    columns=[{"name": i, "id": i} for i in table_data[0].keys()],
+                    data=table_data,
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left', 'minWidth': '100px', 'width': '100px', 'maxWidth': '100px'},
+                    style_header={
+                        'backgroundColor': 'rgb(230, 230, 230)',
+                        'fontWeight': 'bold'
+                    }
+                )
+            else:
+                return "Нет данных о погоде для отображения."
+
+        weather_data = all_weather_data.get(selected_city)
+        weather_status = all_weather_status.get(selected_city)
+
         # Подготовка данных для графиков
-        start_weather_df = pd.DataFrame(start_weather_data['DailyForecasts'])
-        end_weather_df = pd.DataFrame(end_weather_data['DailyForecasts'])
+        weather_df = pd.DataFrame(weather_data['DailyForecasts'][:forecast_days])
 
-        # Создание графиков
-        start_fig = go.Figure()
-        end_fig = go.Figure()
+        # Преобразование данных о температуре
+        weather_df['Temperature_Max'] = weather_df['Temperature'].apply(lambda x: x['Maximum']['Value'])
+        weather_df['Temperature_Min'] = weather_df['Temperature'].apply(lambda x: x['Minimum']['Value'])
 
-        # Добавление данных на графики для начального города
-        start_fig.add_trace(go.Scatter(x=start_weather_df.index, y=start_weather_df['Temperature'].apply(lambda x: x['Maximum']['Value']),
-                             mode='lines+markers', name='Макс. температура'))
-        start_fig.add_trace(go.Scatter(x=start_weather_df.index, y=start_weather_df['Temperature'].apply(lambda x: x['Minimum']['Value']),
-                             mode='lines+markers', name='Мин. температура'))
-        start_fig.update_layout(title=f'Погода в {start_city}', xaxis_title='День', yaxis_title='Температура (°C)')
+        # Преобразование данных о скорости ветра
+        def get_wind_speed(forecast, time_of_day):
+            if 'Wind' in forecast.get(time_of_day, {}) and 'Speed' in forecast[time_of_day]['Wind']:
+                return forecast[time_of_day]['Wind']['Speed']['Value']
+            else:
+                return 0
 
-        # Добавление данных на графики для конечного города
-        end_fig.add_trace(go.Scatter(x=end_weather_df.index, y=end_weather_df['Temperature'].apply(lambda x: x['Maximum']['Value']),
-                           mode='lines+markers', name='Макс. температура'))
-        end_fig.add_trace(go.Scatter(x=end_weather_df.index, y=end_weather_df['Temperature'].apply(lambda x: x['Minimum']['Value']),
-                           mode='lines+markers', name='Мин. температура'))
-        end_fig.update_layout(title=f'Погода в {end_city}', xaxis_title='День', yaxis_title='Температура (°C)')
+        weather_df['Wind_Speed_Day'] = weather_df.apply(lambda x: get_wind_speed(x, 'Day'), axis=1)
+        weather_df['Wind_Speed_Night'] = weather_df.apply(lambda x: get_wind_speed(x, 'Night'), axis=1)
 
-        # Вывод результатов
+        # Преобразование данных об осадках
+        weather_df['Precipitation_Day'] = weather_df['Day'].apply(lambda x: x['HasPrecipitation'])
+        weather_df['Precipitation_Night'] = weather_df['Night'].apply(lambda x: x['HasPrecipitation'])
+
+        fig = go.Figure()
+
+        if data_type == 'temperature':
+            fig.add_trace(go.Scatter(x=weather_df.index, y=weather_df['Temperature_Max'],
+                         mode='lines+markers', name='Макс. температура'))
+            fig.add_trace(go.Scatter(x=weather_df.index, y=weather_df['Temperature_Min'],
+                         mode='lines+markers', name='Мин. температура'))
+        elif data_type == 'wind':
+            fig.add_trace(go.Scatter(x=weather_df.index, y=weather_df['Wind_Speed_Day'],
+                         mode='lines+markers', name='Скорость ветра днем'))
+            fig.add_trace(go.Scatter(x=weather_df.index, y=weather_df['Wind_Speed_Night'],
+                         mode='lines+markers', name='Скорость ветра ночью'))
+        elif data_type == 'precipitation':
+            fig.add_trace(go.Bar(x=weather_df.index, y=weather_df['Precipitation_Day'],
+                         name='Осадки днем'))
+            fig.add_trace(go.Bar(x=weather_df.index, y=weather_df['Precipitation_Night'],
+                         name='Осадки ночью'))
+        
+        # Добавление подписей к осям
+        fig.update_xaxes(title_text='День', tickmode='array', tickvals=list(range(forecast_days)), ticktext=[f'День {i+1}' for i in range(forecast_days)])
+        fig.update_yaxes(title_text='Значение')
+        fig.update_layout(title=f'Погода в {selected_city}')
+
+        # Создание карты
+        fig_map = go.Figure()
+
+        # Добавление маркеров для городов
+        for city, (lat, lon) in city_coordinates.items():
+            fig_map.add_trace(go.Scattermapbox(
+                lat=[lat],
+                lon=[lon],
+                mode='markers',
+                marker=go.scattermapbox.Marker(
+                    size=14
+                ),
+                text=[city],
+                name=city
+            ))
+
+        # Добавление линий маршрута
+        lats = [coord[0] for coord in city_coordinates.values()]
+        lons = [coord[1] for coord in city_coordinates.values()]
+        fig_map.add_trace(go.Scattermapbox(
+            lat=lats,
+            lon=lons,
+            mode='lines',
+            line=dict(width=2, color='blue'),
+            name='Маршрут'
+        ))
+
+        fig_map.update_layout(
+            mapbox_style="open-street-map",
+            margin={"r": 0, "t": 0, "l": 0, "b": 0},
+            mapbox=dict(
+                center=dict(lat=sum(lats) / len(lats), lon=sum(lons) / len(lons)),
+                zoom=4
+            ),
+            title='Карта маршрута'
+        )
+
         return html.Div([
-            html.H3(f"Прогноз погоды для {start_city}"),
-            dcc.Graph(figure=start_fig),
-            html.Ul(children=[html.Li(status) for status in start_weather_status]),
-
-            html.H3(f"Прогноз погоды для {end_city}"),
-            dcc.Graph(figure=end_fig),
-            html.Ul(children=[html.Li(status) for status in end_weather_status])
+            dcc.Graph(figure=fig_map),
+            dcc.Graph(figure=fig),
+            html.Ul(children=[html.Li(status) for status in weather_status])
         ])
 
     return ""
 
+@server.route("/")
+def index():
+    return render_template("index.html")
+
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run_server(debug=True, port=8050)

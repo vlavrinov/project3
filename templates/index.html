@@ -6,17 +6,36 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <h1>Прогноз погоды для маршрута</h1>
-    <form method="POST">
-        <label for="start_city">Начальный город:</label><br>
-        <input type="text" id="start_city" name="start_city" required><br>
-        <label for="end_city">Конечный город:</label><br>
-        <input type="text" id="end_city" name="end_city" required><br><br>
-        <input type="submit" value="Узнать погоду">
-    </form>
+    <div id="dash-container"></div>
 
-    {% if weather_status %}
-    <p>{{ weather_status }}</p>
-    {% endif %}
+    <script>
+        // Функция для добавления нового поля ввода города
+        function addCityInput() {
+            const container = document.getElementById('city-inputs-container');
+            const newIndex = container.children.length;
+
+            const newLabel = document.createElement('label');
+            newLabel.textContent = `Промежуточный город ${newIndex}:`;
+            container.appendChild(newLabel);
+
+            const newInput = document.createElement('input');
+            newInput.type = 'text';
+            newInput.id = `intermediate_city_${newIndex}`;
+            newInput.name = `intermediate_city_${newIndex}`;
+            container.appendChild(newInput);
+
+            container.appendChild(document.createElement('br'));
+        }
+
+        // Встраиваем Dash приложение в div
+        window.addEventListener('DOMContentLoaded', (event) => {
+            const dashContainer = document.getElementById('dash-container');
+            const script = document.createElement('script');
+            script.type = 'application/javascript';
+            script.src = 'http://127.0.0.1:8050/';
+            script.async = true;
+            dashContainer.appendChild(script);
+        });
+    </script>
 </body>
 </html>
